@@ -1,3 +1,5 @@
+using TestAPIKeyCalling.Services;
+
 namespace TestAPIKeyCalling;
 
 public class Program
@@ -5,30 +7,39 @@ public class Program
     public static void Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-
-        // Add services to the container.
-        builder.Services.AddRazorPages();
-
+        ConfigureServices(builder.Services, builder.Configuration);
         var app = builder.Build();
+        ConfigurePipeline(app);
+        app.Run();
+    }
 
-        // Configure the HTTP request pipeline.
+    public static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddRazorPages();
+        services.AddSingleton(new GeminiSettings(configuration["Gemini:Model"]));
+        services.AddScoped<IApiKeyReader, FileApiKeyReader>();
+        services.AddHttpClient<IGeminiService, GeminiService>("Gemini", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+        })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .RedactLoggedHeaders(_ => true)
+            .RemoveAllLoggers();
+    }
+
+    public static void ConfigurePipeline(WebApplication app)
+    {
+        // Use safe error pages even in Development for this credential testing app.
+        app.UseExceptionHandler("/Error");
         if (!app.Environment.IsDevelopment())
         {
-            app.UseExceptionHandler("/Error");
-            // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
             app.UseHsts();
         }
 
         app.UseHttpsRedirection();
-
         app.UseRouting();
-
         app.UseAuthorization();
-
         app.MapStaticAssets();
-        app.MapRazorPages()
-           .WithStaticAssets();
-
-        app.Run();
+        app.MapRazorPages().WithStaticAssets();
     }
 }

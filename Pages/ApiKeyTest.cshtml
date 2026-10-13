@@ -1,0 +1,32 @@
+@page
+@model ApiKeyTestModel
+@{
+    ViewData["Title"] = "API Key 測試頁面";
+}
+
+<h1>API Key 測試頁面</h1>
+<p class="text-muted">
+    Key 由後端從本機 gemini-api-key.txt 讀取，不會顯示於頁面。
+    送出的文字會傳至 Gemini；每次送出都是獨立測試，不包含先前問答。
+</p>
+
+<form method="post" id="api-key-test-form" novalidate>
+    <div class="mb-3">
+        <label asp-for="Input" class="form-label">輸入內容</label>
+        <textarea asp-for="Input" class="form-control" rows="6" aria-describedby="input-help" data-max-length="4000"></textarea>
+        <div id="input-help" class="form-text">最多 4,000 個 UTF-16 單位；部分 emoji 計為兩個單位，表單換行以 CRLF 計為兩個單位。</div>
+    </div>
+    <button type="submit" id="submit-test" class="btn btn-primary">送出測試</button>
+    <div id="test-status" class="mt-3 @(string.IsNullOrEmpty(Model.StatusMessage) ? "" : $"alert alert-{Model.StatusStyle}")"
+         role="status" aria-live="polite" aria-atomic="true">@Model.StatusMessage</div>
+    <div class="mt-3">
+        <label for="Result" class="form-label">回傳結果</label>
+        <textarea id="Result" class="form-control" rows="10" readonly aria-describedby="result-help">
+@Model.Output</textarea>
+        <div id="result-help" class="form-text">結果以純文字顯示，可捲動、選取與複製。</div>
+    </div>
+</form>
+
+@section Scripts {
+    <script src="~/js/api-key-test.js" asp-append-version="true"></script>
+}

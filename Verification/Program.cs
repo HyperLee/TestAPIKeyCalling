@@ -23,8 +23,41 @@ internal static partial class Program
             return 0;
         }
 
+        if (args.Contains("--chat-only"))
+        {
+            await ChatContractTests();
+            Console.WriteLine($"Summary: {_passed}/{_passed + _failed} checks passed.");
+            return _failed == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--services-only"))
+        {
+            await KeyTests();
+            await ServiceTests();
+            await ChatContractTests();
+            Console.WriteLine($"Summary: {_passed}/{_passed + _failed} checks passed.");
+            return _failed == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--session-only"))
+        {
+            await ChatSessionTests();
+            Console.WriteLine($"Summary: {_passed}/{_passed + _failed} checks passed.");
+            return _failed == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--chat-page-only"))
+        {
+            await ChatPageTests();
+            Console.WriteLine($"Summary: {_passed}/{_passed + _failed} checks passed.");
+            return _failed == 0 ? 0 : 1;
+        }
+
         await KeyTests();
         await ServiceTests();
+        await ChatContractTests();
+        await ChatSessionTests();
+        await ChatPageTests();
         await PageTests();
         Console.WriteLine($"Summary: {_passed}/{_passed + _failed} checks passed.");
         return _failed == 0 ? 0 : 1;
@@ -329,12 +362,14 @@ internal static partial class Program
         public FakeReader Reader { get; } = new();
         public CapturingLogger Logger { get; } = new();
         public HttpClient Client { get; }
+        public GeminiApiClient ApiClient { get; }
         public GeminiService Service { get; }
 
         public Fixture(string? model = null)
         {
             Client = new HttpClient(Handler) { Timeout = TimeSpan.FromSeconds(60) };
-            Service = new GeminiService(Client, Reader, new GeminiSettings(model), Logger);
+            ApiClient = new GeminiApiClient(Client, new GeminiSettings(model), Logger);
+            Service = new GeminiService(ApiClient, Reader, Logger);
         }
 
         public void Dispose() => Client.Dispose();
@@ -364,6 +399,8 @@ internal static partial class Program
         public string Url { get; private set; } = "";
         public string Body { get; private set; } = "";
         public string Header { get; private set; } = "";
+        public List<string> Bodies { get; } = [];
+        public List<string> Headers { get; } = [];
         public string? ContentType { get; private set; }
         public HttpMethod? Method { get; private set; }
         public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
@@ -378,6 +415,8 @@ internal static partial class Program
             Url = request.RequestUri!.AbsoluteUri;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             Header = request.Headers.GetValues("x-goog-api-key").Single();
+            Bodies.Add(Body);
+            Headers.Add(Header);
             ContentType = request.Content.Headers.ContentType?.MediaType;
             Method = request.Method;
             if (Delay > TimeSpan.Zero)
@@ -403,7 +442,7 @@ internal static partial class Program
         }
     }
 
-    private sealed class CapturingLogger : ILogger<GeminiService>
+    private sealed class CapturingLogger : ILogger<GeminiService>, ILogger<GeminiApiClient>
     {
         public List<string> Messages { get; } = [];
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

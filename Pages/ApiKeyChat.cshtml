@@ -1,0 +1,77 @@
+@page
+@model ApiKeyChatModel
+@{
+    ViewData["Title"] = "API Key 對話頁面";
+}
+
+<h1>API Key 對話頁面</h1>
+<p class="text-muted">
+    Key 與對話只會暫存在此應用程式的記憶體中，閒置 30 分鐘後到期。送出的文字及必要對話歷史會傳至 Gemini。
+</p>
+
+<div id="chat-status" class="mb-3 @(string.IsNullOrEmpty(Model.StatusMessage) ? "" : $"alert alert-{Model.StatusStyle}")"
+     role="status" aria-live="polite" aria-atomic="true">@Model.StatusMessage</div>
+
+@if (!Model.HasSession)
+{
+    <form method="post" asp-page-handler="Begin" id="api-key-chat-begin-form" novalidate>
+        <div class="mb-3">
+            <label asp-for="ApiKey" class="form-label">Gemini API Key</label>
+            <input asp-for="ApiKey" type="password" class="form-control" autocomplete="new-password" spellcheck="false" aria-describedby="api-key-chat-key-help" />
+            <div id="api-key-chat-key-help" class="form-text">Key 只在伺服器記憶體短期保存，不會顯示或寫入檔案。</div>
+        </div>
+        <button type="submit" class="btn btn-primary">開始對話</button>
+    </form>
+}
+else
+{
+    <section id="api-key-chat" data-completed-rounds="@Model.CompletedRounds" data-max-rounds="20">
+        <div class="d-flex flex-wrap gap-2 mb-3 chat-actions">
+            <form method="post" asp-page-handler="NewChat" class="chat-control-form">
+                <button type="submit" class="btn btn-outline-primary">新對話</button>
+            </form>
+            <form method="post" asp-page-handler="ClearKey" class="chat-control-form">
+                <button type="submit" class="btn btn-outline-danger">清除 Key</button>
+            </form>
+            <span id="chat-round-status" class="align-self-center text-muted" role="status" aria-live="polite">
+                已完成 @Model.CompletedRounds / 20 組
+            </span>
+        </div>
+
+        <div id="chat-history" class="chat-history" aria-label="對話紀錄">
+            @for (var index = 0; index < Model.Messages.Count; index++)
+            {
+                var message = Model.Messages[index];
+                var isUser = message.Role == "user";
+                <article class="chat-message @(isUser ? "chat-message-user" : "chat-message-model")">
+                    <h2 class="chat-message-label">@(isUser ? "你" : "Gemini")</h2>
+                    <div class="chat-message-text">@message.Text</div>
+                    @if (!isUser && index == Model.Messages.Count - 1 && Model.LastResponseTruncated)
+                    {
+                        <div class="alert alert-warning mt-2 mb-0">回覆已達長度限制，內容可能不完整。</div>
+                    }
+                </article>
+            }
+        </div>
+
+        @if (Model.CompletedRounds >= 20)
+        {
+            <div id="chat-limit-notice" class="alert alert-warning" role="status">此對話已達 20 組上限，請開始新對話。</div>
+        }
+
+        <form id="api-key-chat-send-form" class="mt-3" novalidate>
+            @Html.AntiForgeryToken()
+            <div class="mb-3">
+                <label for="chat-message-input" class="form-label">輸入訊息</label>
+                <textarea id="chat-message-input" class="form-control" rows="4" maxlength="4000"
+                          aria-describedby="chat-message-help" data-max-length="4000"></textarea>
+                <div id="chat-message-help" class="form-text">最多 4,000 個 .NET UTF-16 單位；emoji 可能計為兩個單位，換行依提交內容計算。</div>
+            </div>
+            <button id="chat-send-button" type="submit" class="btn btn-primary" disabled="@(Model.CompletedRounds >= 20)">送出</button>
+        </form>
+    </section>
+}
+
+@section Scripts {
+    <script src="~/js/api-key-chat.js" asp-append-version="true"></script>
+}

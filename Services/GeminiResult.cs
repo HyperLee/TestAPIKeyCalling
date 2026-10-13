@@ -21,6 +21,7 @@ public enum GeminiError
     Blocked,
     NoText,
     InvalidResponse,
+    ContextLength,
     Unexpected
 }
 
@@ -34,6 +35,13 @@ public interface IApiKeyReader
 public interface IGeminiService
 {
     Task<GeminiResult> GenerateAsync(string input, CancellationToken cancellationToken);
+}
+
+public sealed record GeminiChatMessage(string Role, string Text);
+
+public interface IGeminiChatService
+{
+    Task<GeminiResult> GenerateAsync(string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken);
 }
 
 public sealed class KeyConfigurationException(string message) : Exception(message);

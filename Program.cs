@@ -16,15 +16,19 @@ public class Program
     public static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
     {
         services.AddRazorPages();
+        services.AddMemoryCache();
+        services.AddSingleton<IChatSessionStore, MemoryChatSessionStore>();
         services.AddSingleton(new GeminiSettings(configuration["Gemini:Model"]));
         services.AddScoped<IApiKeyReader, FileApiKeyReader>();
-        services.AddHttpClient<IGeminiService, GeminiService>("Gemini", client =>
+        services.AddHttpClient<GeminiApiClient>("Gemini", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60);
         })
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
             .RedactLoggedHeaders(_ => true)
             .RemoveAllLoggers();
+        services.AddScoped<IGeminiService, GeminiService>();
+        services.AddScoped<IGeminiChatService, GeminiChatService>();
     }
 
     public static void ConfigurePipeline(WebApplication app)

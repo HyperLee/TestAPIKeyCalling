@@ -6,4 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Content Remove="gemini-api-key.txt;Verification/**" />
+    <None Remove="gemini-api-key.txt;Verification/**" />
+    <Compile Remove="Verification/**" />
+  </ItemGroup>
+
 </Project>

@@ -6,6 +6,12 @@
 # dotenv files
 .env
 
+# Local Gemini credential (never commit)
+/gemini-api-key.txt
+
+# Browser verification artifacts
+/.playwright-cli/
+
 # User-specific files
 *.rsuser
 *.suo

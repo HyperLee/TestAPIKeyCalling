@@ -73,6 +73,36 @@ await page.screenshot({ path: '/private/tmp/gemini-api-key-test-mobile.png', ful
 await page.setViewportSize({ width: 1280, height: 900 });
 await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 await page.screenshot({ path: '/private/tmp/gemini-api-key-test-desktop.png', fullPage: true });
-return { passed: true, scenarios: 'validation, UTF16 and native newline boundaries, processing, duplicate prevention, script safety, leading newlines, error recovery, truncation, responsive layout, local network, credential protection, clean console', postCount: requests.filter(r => r.method === 'POST').length, consoleErrors: consoleErrors.length, pageErrors: pageErrors.length };
+
+const chatKey = 'synthetic-chat-key-never-a-real-key';
+const chatRequestStart = requests.length;
+await page.goto('http://127.0.0.1:5288/ApiKeyChat');
+await page.getByLabel('Gemini API Key').fill(chatKey);
+await page.getByRole('button', { name: '開始對話' }).click({ noWaitAfter: true });
+await page.waitForFunction(() => document.getElementById('api-key-chat') !== null);
+assert(await page.locator('#chat-current-model').innerText() === 'gemini-3.8-flash', 'chat starts with default model');
+await page.locator('#SelectedModelId').selectOption('gemini-3.5-flash-lite');
+const changeResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).searchParams.get('handler') === 'ChangeModel');
+await page.getByRole('button', { name: '切換模型' }).click({ noWaitAfter: true });
+const changeResponse = await changeResponsePromise;
+const chatRequests = requests.slice(chatRequestStart);
+const changeRequest = chatRequests.find(request => request.method === 'POST'
+    && new URL(request.url).searchParams.get('handler') === 'ChangeModel');
+assert(changeResponse.status() === 302, `model switch should redirect, got HTTP ${changeResponse.status()}`);
+assert(changeRequest !== undefined && changeRequest.body.includes('SelectedModelId=gemini-3.5-flash-lite'), 'model switch POST includes selected model');
+assert(!changeRequest.body.includes(chatKey), 'model switch POST omits API key');
+await page.waitForFunction(() => document.getElementById('chat-current-model')?.textContent.trim() === 'gemini-3.5-flash-lite');
+assert(await page.locator('#chat-current-model').innerText() === 'gemini-3.5-flash-lite', 'chat displays changed model');
+const keyRequests = chatRequests.filter(request => request.body?.includes(chatKey));
+assert(keyRequests.length === 1 && new URL(keyRequests[0].url).searchParams.get('handler') === 'Begin', 'synthetic key is sent only on Begin');
+assert(!chatRequests.some(request => new URL(request.url).searchParams.get('handler') === 'Send'), 'model switch sends no chat message');
+assert(!(await page.content()).includes(chatKey), 'synthetic key is absent from chat HTML');
+assert(!chatRequests.some(request => new URL(request.url).hostname !== '127.0.0.1'), 'chat flow stays on local fake host');
+
+const allChatRequestsLocal = chatRequests.every(request => new URL(request.url).hostname === '127.0.0.1');
+assert(allRequestsLocal && allChatRequestsLocal, 'browser requests stay local');
+assert(consoleErrors.length === 0 && pageErrors.length === 0, 'no console or runtime errors');
+return { passed: true, scenarios: 'API key page validation, chat model switch, model payload, key protection, no chat submission, local network, clean console', postCount: requests.filter(r => r.method === 'POST').length + chatRequests.filter(r => r.method === 'POST').length, consoleErrors: consoleErrors.length, pageErrors: pageErrors.length };
 
 }

@@ -42,7 +42,7 @@
                 event.preventDefault();
                 return;
             }
-            setBusy(true);
+            setBusy(true, controlForm);
             showStatus("正在更新對話…", "info");
         });
     }
@@ -152,14 +152,17 @@
         history.scrollTop = history.scrollHeight;
     }
 
-    function setBusy(value) {
+    function setBusy(value, submittedControlForm = null) {
         busy = value;
         sendButton.disabled = value || Number(chat.dataset.completedRounds) >= 20;
         input.disabled = value;
         for (const control of document.querySelectorAll(".chat-control-form button")) {
+            if (value && submittedControlForm?.contains(control)) continue;
             control.disabled = value;
         }
-        if (modelSelect) modelSelect.disabled = value;
+        if (modelSelect && !(value && submittedControlForm?.contains(modelSelect))) {
+            modelSelect.disabled = value;
+        }
         form.setAttribute("aria-busy", String(value));
     }
 

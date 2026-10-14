@@ -14,7 +14,12 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
     [BindProperty]
     public string ApiKey { get; set; } = "";
 
+    [BindProperty]
+    public string SelectedModelId { get; set; } = GeminiChatModels.DefaultModelId;
+
+    public IReadOnlyList<GeminiChatModelOption> ModelOptions => GeminiChatModels.All;
     public bool HasSession { get; private set; }
+    public string CurrentModelId { get; private set; } = GeminiChatModels.DefaultModelId;
     public IReadOnlyList<GeminiChatMessage> Messages { get; private set; } = [];
     public int CompletedRounds { get; private set; }
     public bool LastResponseTruncated { get; private set; }
@@ -30,6 +35,14 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
     public async Task<IActionResult> OnPostBeginAsync()
     {
         PreventCaching();
+        var modelId = HasPostedModelId() ? SelectedModelId : GeminiChatModels.DefaultModelId;
+        if (!GeminiChatModels.IsAllowed(modelId))
+        {
+            ApiKey = "";
+            ModelState.Remove(nameof(ApiKey));
+            return BadRequest();
+        }
+
         var oldSessionIndex = GetSessionIndex();
         if (oldSessionIndex is not null)
         {
@@ -47,8 +60,36 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
             return Page();
         }
 
-        var sessionIndex = sessions.Create(normalizedKey!);
+        var sessionIndex = sessions.Create(normalizedKey!, modelId);
         Response.Cookies.Append(SessionCookieName, sessionIndex, SessionCookieOptions());
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostChangeModelAsync()
+    {
+        PreventCaching();
+        if (!HasPostedModelId() || !GeminiChatModels.IsAllowed(SelectedModelId))
+        {
+            return BadRequest();
+        }
+
+        if (GetSessionIndex() is not { } sessionIndex)
+        {
+            DeleteSessionCookie();
+            return RedirectToPage();
+        }
+
+        var status = await sessions.ChangeModelAsync(sessionIndex, SelectedModelId, HttpContext.RequestAborted);
+        if (status == ChatModelChangeStatus.InvalidModel)
+        {
+            return BadRequest();
+        }
+
+        if (status == ChatModelChangeStatus.SessionExpired)
+        {
+            DeleteSessionCookie();
+        }
+
         return RedirectToPage();
     }
 
@@ -124,7 +165,7 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
         try
         {
             var requestMessages = lease.History.Append(new GeminiChatMessage("user", message)).ToArray();
-            var result = await gemini.GenerateAsync(lease.ApiKey, requestMessages, HttpContext.RequestAborted);
+            var result = await gemini.GenerateAsync(lease.ModelId, lease.ApiKey, requestMessages, HttpContext.RequestAborted);
             if (result.Outcome is GeminiOutcome.Success or GeminiOutcome.Truncated)
             {
                 if (string.IsNullOrWhiteSpace(result.Text) || !lease.Complete(result))
@@ -178,6 +219,8 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
         }
 
         HasSession = true;
+        CurrentModelId = snapshot.ModelId;
+        SelectedModelId = snapshot.ModelId;
         Messages = snapshot.Messages;
         CompletedRounds = snapshot.CompletedRounds;
         LastResponseTruncated = snapshot.LastResponseTruncated;
@@ -186,6 +229,11 @@ public sealed class ApiKeyChatModel(IGeminiChatService gemini, IChatSessionStore
     private string? GetSessionIndex()
     {
         return Request.Cookies.TryGetValue(SessionCookieName, out var sessionIndex) ? sessionIndex : null;
+    }
+
+    private bool HasPostedModelId()
+    {
+        return Request.HasFormContentType && Request.Form.ContainsKey(nameof(SelectedModelId));
     }
 
     private CookieOptions SessionCookieOptions()

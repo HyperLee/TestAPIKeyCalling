@@ -63,9 +63,14 @@ public sealed class GeminiService(GeminiApiClient apiClient, IApiKeyReader keyRe
 
 public sealed class GeminiChatService(GeminiApiClient apiClient) : IGeminiChatService
 {
-    public async Task<GeminiResult> GenerateAsync(string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken)
+    public async Task<GeminiResult> GenerateAsync(string modelId, string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken)
     {
-        var result = await apiClient.GenerateAsync(apiKey, messages, cancellationToken);
+        if (!GeminiChatModels.IsAllowed(modelId))
+        {
+            return new GeminiResult(GeminiOutcome.Error, "", "所選模型不在允許清單，請重新選擇。", GeminiError.Configuration);
+        }
+
+        var result = await apiClient.GenerateAsync(modelId, apiKey, messages, cancellationToken);
         if (result.Outcome == GeminiOutcome.Success)
         {
             return result with { Message = "對話成功" };

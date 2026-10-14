@@ -15,15 +15,25 @@ public enum ChatSendStatus
     RoundLimit
 }
 
-public sealed record ChatSessionSnapshot(IReadOnlyList<GeminiChatMessage> Messages, int CompletedRounds, bool LastResponseTruncated);
+public enum ChatModelChangeStatus
+{
+    Changed,
+    Unchanged,
+    InvalidModel,
+    SessionExpired
+}
+
+public sealed record ChatSessionSnapshot(IReadOnlyList<GeminiChatMessage> Messages, int CompletedRounds, bool LastResponseTruncated, string ModelId);
 
 public sealed record ChatSendStart(ChatSendStatus Status, ChatSendLease? Lease = null, GeminiResult? Result = null);
 
 public interface IChatSessionStore
 {
     string Create(string apiKey);
+    string Create(string apiKey, string modelId);
     ChatSessionSnapshot? Get(string sessionIndex);
     ChatSendStart TryBeginSend(string sessionIndex, Guid requestId, string input);
+    Task<ChatModelChangeStatus> ChangeModelAsync(string sessionIndex, string modelId, CancellationToken cancellationToken);
     Task ResetConversationAsync(string sessionIndex, CancellationToken cancellationToken);
     Task RemoveAsync(string sessionIndex, CancellationToken cancellationToken);
 }
@@ -32,18 +42,20 @@ public sealed class ChatSendLease : IDisposable
 {
     private ChatSessionState? _state;
 
-    internal ChatSendLease(ChatSessionState state, Guid requestId, string input, string apiKey, IReadOnlyList<GeminiChatMessage> history)
+    internal ChatSendLease(ChatSessionState state, Guid requestId, string input, string apiKey, string modelId, IReadOnlyList<GeminiChatMessage> history)
     {
         _state = state;
         RequestId = requestId;
         Input = input;
         ApiKey = apiKey;
+        ModelId = modelId;
         History = history;
     }
 
     internal Guid RequestId { get; }
     internal string Input { get; }
     public string ApiKey { get; }
+    public string ModelId { get; }
     public IReadOnlyList<GeminiChatMessage> History { get; }
 
     public bool Complete(GeminiResult result)
@@ -86,6 +98,16 @@ public sealed class MemoryChatSessionStore(IMemoryCache memoryCache, TimeSpan? i
 
     public string Create(string apiKey)
     {
+        return Create(apiKey, GeminiChatModels.DefaultModelId);
+    }
+
+    public string Create(string apiKey, string modelId)
+    {
+        if (!GeminiChatModels.IsAllowed(modelId))
+        {
+            throw new ArgumentOutOfRangeException(nameof(modelId));
+        }
+
         if (ApiKeyValidation.GetError(apiKey, out var normalizedKey) is not null)
         {
             throw new ArgumentException("Key format is invalid.", nameof(apiKey));
@@ -96,7 +118,7 @@ public sealed class MemoryChatSessionStore(IMemoryCache memoryCache, TimeSpan? i
         do
         {
             sessionIndex = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-            state = new ChatSessionState(normalizedKey!);
+            state = new ChatSessionState(normalizedKey!, modelId);
         }
         while (memoryCache.TryGetValue(sessionIndex, out object? _));
 
@@ -114,7 +136,7 @@ public sealed class MemoryChatSessionStore(IMemoryCache memoryCache, TimeSpan? i
 
         lock (state.Sync)
         {
-            return new ChatSessionSnapshot(state.Messages.ToArray(), state.Messages.Count / 2, state.LastResponseTruncated);
+            return new ChatSessionSnapshot(state.Messages.ToArray(), state.Messages.Count / 2, state.LastResponseTruncated, state.ModelId);
         }
     }
 
@@ -147,8 +169,58 @@ public sealed class MemoryChatSessionStore(IMemoryCache memoryCache, TimeSpan? i
                 return new ChatSendStart(ChatSendStatus.RoundLimit);
             }
 
-            var lease = new ChatSendLease(state, requestId, input, state.ApiKey, state.Messages.ToArray());
+            var lease = new ChatSendLease(state, requestId, input, state.ApiKey, state.ModelId, state.Messages.ToArray());
             return new ChatSendStart(ChatSendStatus.Started, lease);
+        }
+    }
+
+    public async Task<ChatModelChangeStatus> ChangeModelAsync(string sessionIndex, string modelId, CancellationToken cancellationToken)
+    {
+        if (!GeminiChatModels.IsAllowed(modelId))
+        {
+            return ChatModelChangeStatus.InvalidModel;
+        }
+
+        var state = GetState(sessionIndex);
+        if (state is null)
+        {
+            return ChatModelChangeStatus.SessionExpired;
+        }
+
+        lock (state.Sync)
+        {
+            state.PendingControls++;
+        }
+
+        var acquired = false;
+        try
+        {
+            await state.OperationGate.WaitAsync(cancellationToken);
+            acquired = true;
+            lock (state.Sync)
+            {
+                if (state.ModelId == modelId)
+                {
+                    return ChatModelChangeStatus.Unchanged;
+                }
+
+                state.ModelId = modelId;
+                state.Messages.Clear();
+                state.CompletedRequests.Clear();
+                state.LastResponseTruncated = false;
+                return ChatModelChangeStatus.Changed;
+            }
+        }
+        finally
+        {
+            lock (state.Sync)
+            {
+                state.PendingControls--;
+            }
+            if (acquired)
+            {
+                state.OperationGate.Release();
+            }
         }
     }
 
@@ -233,11 +305,12 @@ public static class ApiKeyValidation
     }
 }
 
-internal sealed class ChatSessionState(string apiKey)
+internal sealed class ChatSessionState(string apiKey, string modelId)
 {
     public object Sync { get; } = new();
     public SemaphoreSlim OperationGate { get; } = new(1, 1);
     public string ApiKey { get; set; } = apiKey;
+    public string ModelId { get; set; } = modelId;
     public List<GeminiChatMessage> Messages { get; } = [];
     public Dictionary<Guid, ChatCompletedRequest> CompletedRequests { get; } = [];
     public bool LastResponseTruncated { get; set; }

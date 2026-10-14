@@ -41,7 +41,7 @@ public sealed record GeminiChatMessage(string Role, string Text);
 
 public interface IGeminiChatService
 {
-    Task<GeminiResult> GenerateAsync(string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken);
+    Task<GeminiResult> GenerateAsync(string modelId, string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken);
 }
 
 public sealed class KeyConfigurationException(string message) : Exception(message);

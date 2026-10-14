@@ -30,6 +30,7 @@
     const history = document.getElementById("chat-history");
     const roundStatus = document.getElementById("chat-round-status");
     const chat = document.getElementById("api-key-chat");
+    const modelSelect = document.getElementById("SelectedModelId");
     const maximumLength = Number(input.dataset.maxLength);
     let busy = false;
     let pendingRequestId = null;
@@ -158,6 +159,7 @@
         for (const control of document.querySelectorAll(".chat-control-form button")) {
             control.disabled = value;
         }
+        if (modelSelect) modelSelect.disabled = value;
         form.setAttribute("aria-busy", String(value));
     }
 

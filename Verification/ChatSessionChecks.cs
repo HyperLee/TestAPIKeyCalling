@@ -12,6 +12,24 @@ internal static partial class Program
 {
     private static async Task ChatSessionTests()
     {
+        await Check("ChatModels_ExposeThreeAllowedModelsAndRequiredHints", () =>
+        {
+            var catalog = typeof(ApplicationProgram).Assembly.GetType("TestAPIKeyCalling.Services.GeminiChatModels");
+            Require(catalog is not null);
+            Require((string?)catalog!.GetField("DefaultModelId")?.GetValue(null) == "gemini-3.8-flash");
+            var models = ((IEnumerable)catalog.GetProperty("All")!.GetValue(null)!).Cast<object>().ToArray();
+            Require(models.Length == 3);
+            Require(models.Select(model => model.GetType().GetProperty("Id")!.GetValue(model)).Cast<string>()
+                .SequenceEqual(["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]));
+            Require(models.Select(model => (string)model.GetType().GetProperty("Hint")!.GetValue(model)!).Any(hint => hint.Contains("建議", StringComparison.Ordinal)));
+            Require(models.Select(model => (string)model.GetType().GetProperty("Hint")!.GetValue(model)!).Any(hint => hint.Contains("成本", StringComparison.Ordinal)));
+            Require(models.Select(model => (string)model.GetType().GetProperty("Hint")!.GetValue(model)!).Any(hint => hint.Contains("受限", StringComparison.Ordinal)));
+            var isAllowed = catalog.GetMethod("IsAllowed")!;
+            Require(models.All(model => (bool)isAllowed.Invoke(null, [model.GetType().GetProperty("Id")!.GetValue(model)])!));
+            Require(!(bool)isAllowed.Invoke(null, ["gemini-3.8-flash:generateContent"])!);
+            return Task.CompletedTask;
+        });
+
         await Check("Session_Index_IsRandomBase64Url256BitValue", () =>
         {
             using var fixture = new SessionFixture();
@@ -36,6 +54,87 @@ internal static partial class Program
             Require(fixture.MessageCount(fixture.Get(second)) == 0);
             fixture.DisposeLease(secondSend);
             return Task.CompletedTask;
+        });
+
+        await Check("Session_StoresSelectedModelInSnapshotAndSendLease", () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key", "gemini-3.5-flash-lite");
+            Require(fixture.ModelId(fixture.Get(index)) == "gemini-3.5-flash-lite");
+            var started = fixture.Begin(index, Guid.NewGuid(), "使用選定模型");
+            Require(fixture.Status(started) == "Started" && fixture.ModelId(started) == "gemini-3.5-flash-lite");
+            fixture.DisposeLease(started);
+            return Task.CompletedTask;
+        });
+
+        await Check("Session_CreateWithoutModelUsesDefault", () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key");
+            Require(fixture.ModelId(fixture.Get(index)) == "gemini-3.8-flash");
+            return Task.CompletedTask;
+        });
+
+        await Check("Session_ChangingModelClearsConversationAndDedupButRetainsKey", async () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key", "gemini-3.8-flash");
+            var requestId = Guid.NewGuid();
+            var started = fixture.Begin(index, requestId, "舊對話");
+            fixture.Complete(started, new GeminiResult(GeminiOutcome.Truncated, "舊回覆", "截斷"));
+            fixture.DisposeLease(started);
+            Require(fixture.LastResponseTruncated(fixture.Get(index)));
+
+            Require(await fixture.ChangeModelAsync(index, "gemini-2.5-flash") == "Changed");
+            var snapshot = fixture.Get(index);
+            Require(fixture.ModelId(snapshot) == "gemini-2.5-flash");
+            Require(fixture.MessageCount(snapshot) == 0 && fixture.LastResponseTruncated(snapshot) == false);
+            var reusedId = fixture.Begin(index, requestId, "新對話");
+            Require(fixture.Status(reusedId) == "Started" && fixture.ApiKey(reusedId) == "synthetic-key");
+            Require(fixture.ModelId(reusedId) == "gemini-2.5-flash" && fixture.MessageCount(fixture.History(reusedId)) == 0);
+            fixture.DisposeLease(reusedId);
+        });
+
+        await Check("Session_ChangingToCurrentModelPreservesHistoryAndReplay", async () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key", "gemini-3.8-flash");
+            var requestId = Guid.NewGuid();
+            var started = fixture.Begin(index, requestId, "保留的對話");
+            fixture.Complete(started, new GeminiResult(GeminiOutcome.Success, "保留的回覆", "成功"));
+            fixture.DisposeLease(started);
+
+            Require(await fixture.ChangeModelAsync(index, "gemini-3.8-flash") == "Unchanged");
+            Require(fixture.MessageCount(fixture.Get(index)) == 2);
+            var replay = fixture.Begin(index, requestId, "保留的對話");
+            Require(fixture.Status(replay) == "Replay" && fixture.ResultText(replay) == "保留的回覆");
+        });
+
+        await Check("Session_ModelChangeWaitsForSendAndBlocksInterleaving", async () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key", "gemini-3.8-flash");
+            var active = fixture.Begin(index, Guid.NewGuid(), "切換前的訊息");
+            var change = fixture.ChangeModelAsync(index, "gemini-3.5-flash-lite");
+            var overlapping = fixture.Begin(index, Guid.NewGuid(), "不得交錯");
+            Require(!change.IsCompleted && fixture.Status(overlapping) == "Busy");
+            fixture.Complete(active, new GeminiResult(GeminiOutcome.Success, "切換前的回覆", "成功"));
+            fixture.DisposeLease(active);
+            Require(await change == "Changed");
+            var next = fixture.Begin(index, Guid.NewGuid(), "切換後的訊息");
+            Require(fixture.Status(next) == "Started" && fixture.ModelId(next) == "gemini-3.5-flash-lite");
+            fixture.DisposeLease(next);
+        });
+
+        await Check("Session_InvalidModelChangeLeavesStateUnchanged", async () =>
+        {
+            using var fixture = new SessionFixture();
+            var index = fixture.Create("synthetic-key", "gemini-3.8-flash");
+            var started = fixture.Begin(index, Guid.NewGuid(), "原有對話");
+            fixture.Complete(started, new GeminiResult(GeminiOutcome.Success, "原有回覆", "成功"));
+            fixture.DisposeLease(started);
+            Require(await fixture.ChangeModelAsync(index, "other-model") == "InvalidModel");
+            Require(fixture.ModelId(fixture.Get(index)) == "gemini-3.8-flash" && fixture.MessageCount(fixture.Get(index)) == 2);
         });
 
         await Check("Session_CompletedRequest_ReplaysAndRejectsChangedMessage", () =>
@@ -134,6 +233,7 @@ internal static partial class Program
         }
 
         public string Create(string key) => (string)Invoke("Create", key)!;
+        public string Create(string key, string model) => (string)Invoke("Create", key, model)!;
         public object? Get(string index) => Invoke("Get", index);
         public object Begin(string index, Guid requestId, string input) => Invoke("TryBeginSend", index, requestId, input)!;
         public Task ResetAsync(string index) => (Task)Invoke("ResetConversationAsync", index, CancellationToken.None)!;
@@ -142,7 +242,19 @@ internal static partial class Program
         public object? Result(object start) => start.GetType().GetProperty("Result")!.GetValue(start);
         public string? ResultText(object start) => Result(start)?.GetType().GetProperty("Text")?.GetValue(Result(start)) as string;
         public string ApiKey(object start) => (string)Lease(start).GetType().GetProperty("ApiKey")!.GetValue(Lease(start))!;
+        public string? ModelId(object? source)
+        {
+            var lease = source?.GetType().GetProperty("Lease")?.GetValue(source);
+            return (string?)(lease ?? source)?.GetType().GetProperty("ModelId")?.GetValue(lease ?? source);
+        }
+        public bool LastResponseTruncated(object? snapshot) => (bool?)snapshot?.GetType().GetProperty("LastResponseTruncated")?.GetValue(snapshot) == true;
         public object History(object start) => Lease(start).GetType().GetProperty("History")!.GetValue(Lease(start))!;
+        public async Task<string> ChangeModelAsync(string index, string model)
+        {
+            var task = (Task)Invoke("ChangeModelAsync", index, model, CancellationToken.None)!;
+            await task;
+            return task.GetType().GetProperty("Result")?.GetValue(task)?.ToString() ?? "";
+        }
         public void Complete(object start, GeminiResult result) => Lease(start).GetType().GetMethod("Complete")!.Invoke(Lease(start), [result]);
         public void DisposeLease(object start) => (Lease(start) as IDisposable)?.Dispose();
         public int MessageCount(object? source)
@@ -160,7 +272,8 @@ internal static partial class Program
 
         private object? Invoke(string name, params object[] arguments)
         {
-            var method = _contract.GetMethod(name);
+            var method = _contract.GetMethods().SingleOrDefault(candidate => candidate.Name == name
+                && candidate.GetParameters().Length == arguments.Length);
             Require(method is not null);
             return method!.Invoke(_store, arguments);
         }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -30,6 +31,7 @@ internal static partial class Program
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(logs);
         builder.Logging.SetMinimumLevel(LogLevel.Trace);
+        builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         ApplicationProgram.ConfigureServices(builder.Services, builder.Configuration);
         builder.Services.AddSingleton<IApiKeyReader>(reader);
         builder.Services.AddHttpClient("Gemini")

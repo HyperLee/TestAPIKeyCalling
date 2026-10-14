@@ -20,12 +20,38 @@
             <input asp-for="ApiKey" type="password" class="form-control" autocomplete="new-password" spellcheck="false" aria-describedby="api-key-chat-key-help" />
             <div id="api-key-chat-key-help" class="form-text">Key 只在伺服器記憶體短期保存，不會顯示或寫入檔案。</div>
         </div>
+        <div class="mb-3">
+            <label asp-for="SelectedModelId" class="form-label">選擇 Gemini 模型</label>
+            <select asp-for="SelectedModelId" class="form-select" aria-describedby="chat-model-help">
+                @foreach (var modelOption in Model.ModelOptions)
+                {
+                    <option value="@modelOption.Id">@modelOption.DisplayName（@modelOption.Hint）</option>
+                }
+            </select>
+            <div id="chat-model-help" class="form-text">開始後可切換模型；切換至不同模型會清除目前對話。</div>
+        </div>
         <button type="submit" class="btn btn-primary">開始對話</button>
     </form>
 }
 else
 {
     <section id="api-key-chat" data-completed-rounds="@Model.CompletedRounds" data-max-rounds="20">
+        <div class="mb-3">
+            <p class="mb-1">目前使用模型：<code id="chat-current-model">@Model.CurrentModelId</code></p>
+            <form method="post" asp-page-handler="ChangeModel" id="chat-model-change-form" class="chat-control-form" aria-describedby="chat-model-change-help">
+                <label asp-for="SelectedModelId" class="form-label">切換模型</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <select asp-for="SelectedModelId" class="form-select" aria-describedby="chat-model-change-help">
+                        @foreach (var modelOption in Model.ModelOptions)
+                        {
+                            <option value="@modelOption.Id">@modelOption.DisplayName（@modelOption.Hint）</option>
+                        }
+                    </select>
+                    <button id="chat-change-model-button" type="submit" class="btn btn-outline-primary">切換模型</button>
+                </div>
+                <div id="chat-model-change-help" class="form-text">切換至不同模型會清空目前對話；相同模型不會變更對話。</div>
+            </form>
+        </div>
         <div class="d-flex flex-wrap gap-2 mb-3 chat-actions">
             <form method="post" asp-page-handler="NewChat" class="chat-control-form">
                 <button type="submit" class="btn btn-outline-primary">新對話</button>

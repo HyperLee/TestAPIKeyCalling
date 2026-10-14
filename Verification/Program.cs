@@ -74,7 +74,6 @@ internal static partial class Program
         catch (Exception)
         {
             _failed++;
-            // Never print exception messages: an assertion may involve a secret.
             Console.WriteLine($"FAIL {name}");
         }
     }

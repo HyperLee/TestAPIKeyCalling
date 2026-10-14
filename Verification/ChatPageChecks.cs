@@ -31,6 +31,141 @@ internal static partial class Program
             Require(!html.Contains(FakeReader.Key) && handler.Calls == 0);
         });
 
+        await Check("ChatPage_Get_ShowsAllowedModelsAndDefaultWithoutGeminiCall", async () =>
+        {
+            using var client = fixture.NewClient();
+            using var response = await client.GetAsync("/ApiKeyChat");
+            var html = await response.Content.ReadAsStringAsync();
+            Require(html.Contains("value=\"gemini-3.8-flash\"")
+                && html.Contains("value=\"gemini-3.5-flash-lite\"")
+                && html.Contains("value=\"gemini-2.5-flash\""));
+            var decodedHtml = WebUtility.HtmlDecode(html);
+            Require(decodedHtml.Contains("建議選擇") && decodedHtml.Contains("較省成本") && decodedHtml.Contains("存取可能受限"));
+            Require(OptionIsSelected(html, "gemini-3.8-flash") && handler.Calls == 0);
+        });
+
+        await Check("ChatPage_Begin_StoresEachAllowedModelAndDefaultsMissingModel", async () =>
+        {
+            foreach (var model in new[] { "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash" })
+            {
+                using var client = fixture.NewClient();
+                using var begin = await fixture.BeginAsync(client, FakeReader.Key, model);
+                using var page = await client.GetAsync("/ApiKeyChat");
+                var html = await page.Content.ReadAsStringAsync();
+                Require(begin.StatusCode == HttpStatusCode.Redirect
+                    && html.Contains($"<code id=\"chat-current-model\">{model}</code>")
+                    && !html.Contains(FakeReader.Key));
+            }
+
+            using var missingModelClient = fixture.NewClient();
+            using var missingModelBegin = await fixture.BeginAsync(missingModelClient, FakeReader.Key);
+            using var missingModelPage = await missingModelClient.GetAsync("/ApiKeyChat");
+            var defaultHtml = await missingModelPage.Content.ReadAsStringAsync();
+            Require(missingModelBegin.StatusCode == HttpStatusCode.Redirect
+                && defaultHtml.Contains("<code id=\"chat-current-model\">gemini-3.8-flash</code>")
+                && handler.Calls == 0);
+        });
+
+        await Check("ChatPage_BeginAndChange_RejectInvalidModelsWithoutReplacingSession", async () =>
+        {
+            using var client = fixture.NewClient();
+            using var begin = await fixture.BeginAsync(client, FakeReader.Key, "gemini-3.5-flash-lite");
+            var requestId = Guid.NewGuid();
+            using var send = await fixture.SendAsync(client, "應保留的歷史", requestId);
+            var cookie = fixture.SessionCookieValue(client);
+            var calls = handler.Calls;
+
+            using var invalidBegin = await fixture.BeginAsync(client, "replacement-synthetic-key", "other-model");
+            using var invalidChange = await fixture.PostModelChangeAsync(client, "gemini-3.8-flash:generateContent");
+            Require(begin.StatusCode == HttpStatusCode.Redirect && send.StatusCode == HttpStatusCode.OK);
+            Require(invalidBegin.StatusCode == HttpStatusCode.BadRequest
+                && invalidChange.StatusCode == HttpStatusCode.BadRequest
+                && fixture.SessionCookieValue(client) == cookie
+                && handler.Calls == calls);
+
+            using var page = await client.GetAsync("/ApiKeyChat");
+            var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
+            Require(html.Contains("<code id=\"chat-current-model\">gemini-3.5-flash-lite</code>")
+                && html.Contains("應保留的歷史") && !html.Contains("replacement-synthetic-key"));
+        });
+
+        await Check("ChatPage_ChangeModel_DifferentModelClearsHistoryButRetainsCookieAndKey", async () =>
+        {
+            using var client = fixture.NewClient();
+            using var begin = await fixture.BeginAsync(client, FakeReader.Key, "gemini-3.8-flash");
+            var requestId = Guid.NewGuid();
+            using var sent = await fixture.SendAsync(client, "simulate:truncated", requestId);
+            var cookie = fixture.SessionCookieValue(client);
+            var calls = handler.Calls;
+
+            using var changed = await fixture.PostModelChangeAsync(client, "gemini-3.5-flash-lite");
+            Require(begin.StatusCode == HttpStatusCode.Redirect && sent.StatusCode == HttpStatusCode.OK
+                && changed.StatusCode == HttpStatusCode.Redirect
+                && fixture.SessionCookieValue(client) == cookie);
+            using var page = await client.GetAsync("/ApiKeyChat");
+            var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
+            Require(html.Contains("<code id=\"chat-current-model\">gemini-3.5-flash-lite</code>")
+                && !html.Contains("simulate:truncated") && !html.Contains("內容可能不完整"));
+
+            using var next = await fixture.SendAsync(client, "切換後的新訊息", requestId);
+            Require(next.StatusCode == HttpStatusCode.OK && handler.Calls == calls + 1
+                && handler.Url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+                && handler.Header == FakeReader.Key);
+            using var body = JsonDocument.Parse(handler.Bodies[^1]);
+            var contents = body.RootElement.GetProperty("contents");
+            Require(contents.GetArrayLength() == 1
+                && contents[0].GetProperty("parts")[0].GetProperty("text").GetString() == "切換後的新訊息");
+        });
+
+        await Check("ChatPage_ChangeModel_SameModelPreservesHistoryAndReplay", async () =>
+        {
+            using var client = fixture.NewClient();
+            using var begin = await fixture.BeginAsync(client, FakeReader.Key, "gemini-3.8-flash");
+            var requestId = Guid.NewGuid();
+            using var sent = await fixture.SendAsync(client, "同模型保留", requestId);
+            var calls = handler.Calls;
+            using var unchanged = await fixture.PostModelChangeAsync(client, "gemini-3.8-flash");
+            using var page = await client.GetAsync("/ApiKeyChat");
+            var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
+            using var replay = await fixture.SendAsync(client, "同模型保留", requestId);
+            Require(begin.StatusCode == HttpStatusCode.Redirect && sent.StatusCode == HttpStatusCode.OK
+                && unchanged.StatusCode == HttpStatusCode.Redirect
+                && html.Contains("同模型保留") && handler.Calls == calls
+                && replay.StatusCode == HttpStatusCode.OK);
+        });
+
+        await Check("ChatPage_ChangeModelAndSend_AreSerialized", async () =>
+        {
+            using var client = fixture.NewClient();
+            using var begin = await fixture.BeginAsync(client, FakeReader.Key, "gemini-3.8-flash");
+            handler.Delay = TimeSpan.FromMilliseconds(450);
+            var calls = handler.Calls;
+            var active = fixture.SendAsync(client, "舊模型進行中的訊息", Guid.NewGuid());
+            var startedAt = DateTime.UtcNow;
+            while (handler.Calls == calls && DateTime.UtcNow - startedAt < TimeSpan.FromSeconds(2))
+            {
+                await Task.Delay(10);
+            }
+
+            var change = fixture.PostModelChangeAsync(client, "gemini-3.5-flash-lite");
+            await Task.Delay(60);
+            using var busy = await fixture.SendAsync(client, "不得交錯的訊息", Guid.NewGuid());
+            Require(begin.StatusCode == HttpStatusCode.Redirect && handler.Calls == calls + 1
+                && busy.StatusCode == HttpStatusCode.Conflict && !change.IsCompleted);
+            using var completed = await active;
+            using var changed = await change;
+            Require(completed.StatusCode == HttpStatusCode.OK && changed.StatusCode == HttpStatusCode.Redirect);
+
+            handler.Delay = TimeSpan.Zero;
+            using var next = await fixture.SendAsync(client, "新模型訊息", Guid.NewGuid());
+            Require(next.StatusCode == HttpStatusCode.OK && handler.Calls == calls + 2
+                && handler.Url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent");
+            using var page = await client.GetAsync("/ApiKeyChat");
+            var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
+            Require(!html.Contains("舊模型進行中的訊息") && !html.Contains("不得交錯的訊息")
+                && html.Contains("<code id=\"chat-current-model\">gemini-3.5-flash-lite</code>"));
+        });
+
         var invalidKeyCases = new[] { "", "   ", "fake key", "fake\nkey", "fake\tkey", "fake\0key", "fake中文" };
         for (var index = 0; index < invalidKeyCases.Length; index++)
         {
@@ -64,6 +199,7 @@ internal static partial class Program
         await Check("ChatPage_Begin_SetsScopedRandomCookieWithoutReturningKey", async () =>
         {
             using var client = fixture.NewClient();
+            var calls = handler.Calls;
             using var response = await fixture.BeginAsync(client, FakeReader.Key);
             var body = await response.Content.ReadAsStringAsync();
             var cookies = response.Headers.TryGetValues("Set-Cookie", out var values) ? values.ToArray() : [];
@@ -74,7 +210,7 @@ internal static partial class Program
             Require(sessionCookie.Contains("samesite=strict", StringComparison.OrdinalIgnoreCase));
             Require(sessionCookie.Split(';')[0].Split('=', 2)[1].Length == 43);
             Require(!sessionCookie.Contains(FakeReader.Key, StringComparison.Ordinal));
-            Require(!body.Contains(FakeReader.Key, StringComparison.Ordinal) && handler.Calls == 0);
+            Require(!body.Contains(FakeReader.Key, StringComparison.Ordinal) && handler.Calls == calls);
             using var page = await client.GetAsync("/ApiKeyChat");
             var html = await page.Content.ReadAsStringAsync();
             Require(html.Contains("api-key-chat.js") && html.Contains("新對話") && html.Contains("清除 Key"));
@@ -96,7 +232,7 @@ internal static partial class Program
 
             Require(!fixture.HasSessionCookie(client) && handler.Calls == before);
             using var validBegin = await fixture.BeginAsync(client, FakeReader.Key);
-            foreach (var name in new[] { "Send", "NewChat", "ClearKey" })
+            foreach (var name in new[] { "Send", "NewChat", "ClearKey", "ChangeModel" })
             {
                 using var invalid = await client.PostAsync($"/ApiKeyChat?handler={name}", new FormUrlEncodedContent(new Dictionary<string, string>
                 {
@@ -303,6 +439,13 @@ internal static partial class Program
         }
     }
 
+    private static bool OptionIsSelected(string html, string modelId)
+    {
+        return Regex.Matches(html, "<option\\b[^>]*>").Cast<Match>()
+            .Any(option => option.Value.Contains($"value=\"{modelId}\"", StringComparison.Ordinal)
+                && option.Value.Contains("selected", StringComparison.Ordinal));
+    }
+
     private sealed class ChatPageFixture(string address) : IAsyncDisposable
     {
         private readonly Dictionary<HttpClient, CookieContainer> _containers = [];
@@ -316,14 +459,19 @@ internal static partial class Program
             return client;
         }
 
-        public async Task<HttpResponseMessage> BeginAsync(HttpClient client, string key)
+        public async Task<HttpResponseMessage> BeginAsync(HttpClient client, string key, string? modelId = null)
         {
             var token = await GetTokenAsync(client);
-            return await client.PostAsync("/ApiKeyChat?handler=Begin", new FormUrlEncodedContent(new Dictionary<string, string>
+            var fields = new Dictionary<string, string>
             {
                 ["ApiKey"] = key,
                 ["__RequestVerificationToken"] = token
-            }));
+            };
+            if (modelId is not null)
+            {
+                fields["SelectedModelId"] = modelId;
+            }
+            return await client.PostAsync("/ApiKeyChat?handler=Begin", new FormUrlEncodedContent(fields));
         }
 
         public async Task<HttpResponseMessage> SendAsync(HttpClient client, string input, Guid requestId)
@@ -344,10 +492,24 @@ internal static partial class Program
             return await client.PostAsync($"/ApiKeyChat?handler={handler}", new FormUrlEncodedContent(fields));
         }
 
+        public Task<HttpResponseMessage> PostModelChangeAsync(HttpClient client, string modelId)
+        {
+            return PostHandlerAsync(client, "ChangeModel", new Dictionary<string, string>
+            {
+                ["SelectedModelId"] = modelId
+            });
+        }
+
         public bool HasSessionCookie(HttpClient client)
         {
             return _containers[client].GetCookies(new Uri(address + "/ApiKeyChat"))
                 .Cast<Cookie>().Any(cookie => cookie.Name == "ApiKeyChat.Session");
+        }
+
+        public string? SessionCookieValue(HttpClient client)
+        {
+            return _containers[client].GetCookies(new Uri(address + "/ApiKeyChat"))
+                .Cast<Cookie>().SingleOrDefault(cookie => cookie.Name == "ApiKeyChat.Session")?.Value;
         }
 
         private static async Task<string> GetTokenAsync(HttpClient client)

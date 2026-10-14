@@ -11,14 +11,19 @@ public sealed class GeminiApiClient(HttpClient client, GeminiSettings settings, 
 
     public bool HasValidModel => IsValidModelIdentifier(settings.Model);
 
-    public async Task<GeminiResult> GenerateAsync(string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken)
+    public Task<GeminiResult> GenerateAsync(string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken)
+    {
+        return GenerateAsync(settings.Model, apiKey, messages, cancellationToken);
+    }
+
+    public async Task<GeminiResult> GenerateAsync(string modelId, string apiKey, IReadOnlyList<GeminiChatMessage> messages, CancellationToken cancellationToken)
     {
         var timer = Stopwatch.StartNew();
         int? status = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!HasValidModel)
+            if (!IsValidModelIdentifier(modelId))
             {
                 return Failure(GeminiError.Configuration, "Gemini:Model 設定錯誤，請填入單一模型識別字，不可包含 URL 或 models/ 前綴，修改後重新啟動。");
             }
@@ -35,7 +40,7 @@ public sealed class GeminiApiClient(HttpClient client, GeminiSettings settings, 
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Post,
-                $"https://generativelanguage.googleapis.com/v1beta/models/{settings.Model}:generateContent");
+                $"https://generativelanguage.googleapis.com/v1beta/models/{modelId}:generateContent");
             request.Headers.Add("x-goog-api-key", apiKey);
             request.Content = JsonContent.Create(new
             {
@@ -167,9 +172,9 @@ public sealed class GeminiApiClient(HttpClient client, GeminiSettings settings, 
         }
     }
 
-    public static bool IsValidModelIdentifier(string model)
+    public static bool IsValidModelIdentifier(string? model)
     {
-        return model.Length > 0 && char.IsAsciiLetterOrDigit(model[0])
+        return !string.IsNullOrEmpty(model) && char.IsAsciiLetterOrDigit(model[0])
             && model.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
     }
 

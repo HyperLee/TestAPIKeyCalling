@@ -7,6 +7,7 @@
 <h1>API Key 對話頁面</h1>
 <p class="text-muted">
     Key 與對話只會暫存在此應用程式的記憶體中，閒置 30 分鐘後到期。送出的文字及必要對話歷史會傳至 Gemini。
+    模型可用性與配額依 API Key 所屬 Google 專案的計費層級與模型存取權限而定；開始前請先確認專案狀態。
 </p>
 
 <div id="chat-status" class="mb-3 @(string.IsNullOrEmpty(Model.StatusMessage) ? "" : $"alert alert-{Model.StatusStyle}")"

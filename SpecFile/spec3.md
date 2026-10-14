@@ -4,7 +4,7 @@
 
 本文件新增已實作 `/ApiKeyChat` 的模型選擇功能規格，與 `SpecFile/spec2.md` 配套使用，不取代或修改原規格。`spec2.md` 的聊天、Key、工作階段、安全、錯誤處理與回合提交要求繼續適用；其中「不包含模型選單」僅就本文件所述的 `/ApiKeyChat` 模型選擇功能由本文件補充。其他未明列的行為仍以 `spec2.md` 為準。
 
-本次交付只新增本文件，不改程式、設定、測試或 `spec2.md`，不建立或使用真實 API Key，不呼叫 Gemini，也不將任何秘密資料提交、推送或上傳至 GitHub 或其他公開位置。
+本次變更同步更新 `/ApiKeyChat` 頁首與 `gemini-3.8-flash` 選項提示，以及本規格中的相關規定；不改變模型清單、預設模型、API 呼叫流程或其他頁面行為。不建立或使用真實 API Key、不呼叫 Gemini，也不將任何秘密資料提交、推送或上傳至 GitHub 或其他公開位置。
 
 ## 2. 需求與已確認決策
 
@@ -13,26 +13,26 @@
 | 功能頁面 | 僅 `/ApiKeyChat` 提供模型選擇；`/ApiKeyTest` 維持原行為 |
 | 模型清單 | `gemini-3.8-flash`、`gemini-3.5-flash-lite`、`gemini-2.5-flash` |
 | 初始模型 | 新工作階段預選 `gemini-3.8-flash` |
-| 模型標示 | 3.8 Flash 標示為建議選項；3.5 Flash-Lite 標示為較省成本選項；2.5 Flash 提示存取可能受限 |
+| 模型標示 | 3.8 Flash 標示為建議選項並提醒確認 API Key 專案的付費狀態與模型權限；3.5 Flash-Lite 標示為較省成本選項；2.5 Flash 提示存取可能受限 |
 | 工作階段 | 模型 ID 與 Key、歷史一樣只保存在伺服器記憶體工作階段；cookie 仍只存隨機工作階段索引 |
 | 切換模型 | 保留 Key，清除對話歷史、已完成請求去重資料與截斷狀態；不呼叫 Gemini |
 | 新對話 | 清除歷史並沿用目前選定的模型與 Key |
 | 聊天內容 | 純文字 `generateContent`；不新增圖片、影音、檔案、工具或推理等級選項 |
 | 模型不可用 | 顯示錯誤，不自動改用其他模型 |
 
-截至 2026-10-14，Google 官方模型清單列出 `gemini-3.8-flash` 與 `gemini-3.5-flash-lite` 為穩定模型，並提醒 2.5 系列存取可能受限。模型狀態會變動，開始實作前仍須重新核對官方資料。([Gemini API 模型清單](https://ai.google.dev/gemini-api/docs/models?hl=en))
+截至 2026-10-14，Google 官方模型清單列出 `gemini-3.8-flash` 與 `gemini-3.5-flash-lite` 為穩定模型，並提醒 2.5 系列存取可能受限。官方價格表將 3.8 Flash 標準推論的 Free Tier 輸入與輸出列為免費；但免費層只開放部分模型，實際存取與配額依 API Key 所屬專案的計費層級及權限而異。因此，本頁只提醒確認專案狀態，不宣稱所有免費方案都無法使用此模型。模型狀態會變動，開始實作前仍須重新核對官方資料。([Gemini API 模型清單](https://ai.google.dev/gemini-api/docs/models?hl=en)、[官方價格表](https://ai.google.dev/gemini-api/docs/pricing)、[Billing 說明](https://ai.google.dev/gemini-api/docs/billing))
 
 ## 3. 頁面流程與選擇行為
 
 ### 3.1 尚未建立工作階段
 
-- Key 輸入表單新增模型下拉選單，預選 `gemini-3.8-flash`，列出本文件定義的三個模型及其用途提示。
+- Key 輸入表單新增模型下拉選單，預選 `gemini-3.8-flash`，列出本文件定義的三個模型及其用途提示；3.8 Flash 提示須提醒確認 API Key 專案的付費狀態與模型權限。
 - 「開始對話」的同源 POST 可包含 Key、模型 ID 與防偽資料。後端先驗證模型 ID 及 Key 格式，再建立工作階段；不得為了驗證 Key 或模型而呼叫 Gemini。
 - 缺少模型欄位時採用 `gemini-3.8-flash`。模型 ID 不在允許清單時拒絕請求，不建立或替換工作階段，不清除既有 Key／歷史，也不呼叫 Gemini。
 
 ### 3.2 已建立工作階段
 
-- 聊天畫面顯示目前模型及模型選單，並提供明確的「切換模型」操作；介面須事先提示切換會清空目前對話。
+- 聊天畫面顯示目前模型及模型選單，並提供明確的「切換模型」操作；介面須事先提示切換會清空目前對話。初始表單與聊天畫面的模型選單沿用相同提示，提醒確認 API Key 所屬專案的付費狀態與模型權限，不宣稱該模型不可用。
 - 切換請求只提交模型 ID 與防偽資料，不提交 Key 或聊天歷史。後端重新驗證允許清單後，原子地更新模型並清除訊息、成功請求去重紀錄及截斷標記；保留 Key 和原工作階段 cookie，不呼叫 Gemini。
 - 若選取的模型與目前模型相同，視為不變更，保留歷史及去重紀錄。
 - 「新對話」只清空歷史與去重紀錄，保留 Key 並沿用目前模型。
@@ -76,7 +76,7 @@
 
 | 編號 | 情境／操作 | 預期結果 |
 | --- | --- | --- |
-| MS-AC-01 | 首次開啟沒有工作階段的聊天頁 | 顯示三個允許模型，預選 `gemini-3.8-flash`；不呼叫 Gemini |
+| MS-AC-01 | 首次開啟沒有工作階段的聊天頁 | 顯示三個允許模型，預選 `gemini-3.8-flash`；選項及頁首均提示確認專案方案與模型權限；不呼叫 Gemini |
 | MS-AC-02 | 使用三個允許模型各自開始工作階段 | Key 與所選模型保存在伺服器記憶體；頁面、cookie、URL 與日誌沒有 Key |
 | MS-AC-03 | Begin 請求缺模型值或竄改為未允許的模型 ID | 缺值採預設；未允許值拒絕且不建立／替換工作階段、不呼叫 Gemini |
 | MS-AC-04 | 有效工作階段中切換至不同模型 | 保留 Key 與 cookie，清除訊息、去重資料與截斷狀態；顯示新模型；不呼叫 Gemini |
@@ -88,13 +88,14 @@
 | MS-AC-10 | 選定模型回傳 404、權限錯誤、429 或其他失敗 | 顯示分類安全訊息，不自動換模型、不洩漏原始本文；保留輸入與已完成歷史 |
 | MS-AC-11 | 使用合成 Key 搜尋 Begin POST、切換模型 POST、聊天 POST、頁面回應、cookie、URL、日誌、截圖及 Git 差異 | Key 只出現在初次本機 Key 表單 body 與伺服器送往 Gemini 的認證標頭；切換及後續聊天請求不含 Key；任何真實 Key 均不得進入 Git 或公開平台 |
 | MS-AC-12 | 回歸 `/ApiKeyTest` | 仍使用 `Gemini:Model`，不受 `/ApiKeyChat` 選擇影響 |
+| MS-AC-13 | 有效工作階段的模型切換選單 | 3.8 Flash 選項顯示與初始表單相同的方案及權限提示；模型清單與目前模型不變 |
 
 ## 7. 文件檢查與後續驗證
 
-- 本次規格交付只新增 `SpecFile/spec3.md`；不得修改 `SpecFile/spec2.md`、程式、設定、測試、Key 檔案或其他路徑。
+- 本次變更僅更新 `Services/GeminiChatModels.cs` 的 3.8 Flash 顯示提示、`Pages/ApiKeyChat.cshtml` 頁首說明及 `SpecFile/spec3.md`；不變更允許模型清單、預設模型、伺服器模型權限判斷、API 呼叫行為或 Key 管理流程。
 - 檢查本文件決策、資料流、安全要求及驗收案例一致，並確認沒有真實 Key、佔位用的可用憑證、待填欄位或互相矛盾的要求。
-- 檢查工作樹只出現本文件新增項目；檢查空白字元、Markdown code fence、編碼及行尾。
-- 本次不執行建置、應用程式、測試程式或 Gemini API 呼叫。文件完成不代表模型選擇功能已實作或通過驗收。
+- 檢查工作樹只出現本次範圍內的必要變更；檢查空白字元、Markdown code fence、編碼及行尾。
+- 不建立或使用真實 API Key，也不呼叫 Gemini；完成文案更新不代表 Google 專案權限或配額已實際驗證。
 - 後續實作時依 `spec2.md` 與本文件執行自動及瀏覽器驗收；模型清單、存取限制、配額及定價均可能變動，開發前重新核對官方文件。
 
 ## 8. 官方參考資料
@@ -102,4 +103,6 @@
 - [Gemini API 模型清單與模型可用性](https://ai.google.dev/gemini-api/docs/models?hl=en)
 - [Gemini 3.8 Flash：generateContent、純文字請求與模型設定](https://ai.google.dev/gemini-api/docs/generate-content/whats-new-gemini-3.8)
 - [Gemini API Key：安全取得與使用](https://ai.google.dev/gemini-api/docs/api-key)
+- [Gemini API 價格表與 Free Tier／Paid Tier](https://ai.google.dev/gemini-api/docs/pricing)
+- [Gemini API Billing 與計費層級](https://ai.google.dev/gemini-api/docs/billing)
 - [基準規格：Gemini API Key 對話頁面開發規格書](spec2.md)

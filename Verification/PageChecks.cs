@@ -175,6 +175,14 @@ internal static partial class Program
                 Require(response.StatusCode == HttpStatusCode.NotFound);
             }
         });
+        await Check("LaunchProfile_HttpRedirectsToHttps", () =>
+        {
+            var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));
+            using var settings = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "Properties", "launchSettings.json")));
+            var urls = settings.RootElement.GetProperty("profiles").GetProperty("http").GetProperty("applicationUrl").GetString()!.Split(';');
+            Require(urls.Any(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps));
+            return Task.CompletedTask;
+        });
         await Check("Host_HttpClientTimeoutAndSafeTraceLogging", () =>
         {
             var factory = app.Services.GetRequiredService<IHttpClientFactory>();

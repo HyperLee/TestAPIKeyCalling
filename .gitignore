@@ -5,6 +5,8 @@
 
 # dotenv files
 .env
+.env.*
+!.env.example
 
 # Local Gemini credential (never commit)
 /gemini-api-key.txt
